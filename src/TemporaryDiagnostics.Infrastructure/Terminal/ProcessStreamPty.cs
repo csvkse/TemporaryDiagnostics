@@ -27,7 +27,7 @@ public sealed class ProcessStreamPtySession : IPtySession
     public string Id { get; }
     public int ProcessId => _process.HasExited ? -1 : _process.Id;
     public PtySessionState State => _stateMachine.CurrentState;
-    public bool IsActive => _stateMachine.CurrentState == PtySessionState.Active || _stateMachine.CurrentState == PtySessionState.Detached;
+    public bool IsActive => (_stateMachine.CurrentState == PtySessionState.Active || _stateMachine.CurrentState == PtySessionState.Detached) && !_process.HasExited;
 
     public ProcessStreamPtySession(string sessionId, Process process)
     {
@@ -36,6 +36,17 @@ public sealed class ProcessStreamPtySession : IPtySession
         _stateMachine = new PtySessionStateMachine(sessionId);
         _stateMachine.TryTransition(PtySessionState.Initializing);
         _stateMachine.TryTransition(PtySessionState.Active);
+
+        // 监听子进程自然退出，联动终结状态机并释放资源
+        try
+        {
+            _process.EnableRaisingEvents = true;
+            _process.Exited += (s, e) => _ = TerminateAsync(CancellationToken.None);
+        }
+        catch
+        {
+            // 忽略某些宿主环境不支持 EnableRaisingEvents 的情况
+        }
 
         // 启动后台读取任务
         _ = ReadStreamToChannelAsync(_process.StandardOutput.BaseStream, _outputChannel.Writer, _cts.Token);
@@ -50,13 +61,59 @@ public sealed class ProcessStreamPtySession : IPtySession
         Touch();
         try
         {
-            await _process.StandardInput.BaseStream.WriteAsync(buffer.AsMemory(offset, count), cancellationToken);
+            // 跨平台换行符规范化：Linux 匿名管道没有内核 TTY 行规程 (ICRNL)
+            // 若向 bash 写入 \r\n，\r 会被保留在指令中导致报错 $'cmd\r': command not found
+            var normalizedMemory = NormalizeLineEndings(buffer, offset, count);
+            await _process.StandardInput.BaseStream.WriteAsync(normalizedMemory, cancellationToken);
             await _process.StandardInput.BaseStream.FlushAsync(cancellationToken);
         }
         catch
         {
             // 忽略写入断开异常
         }
+    }
+
+    /// <summary>
+    /// 标准化换行符：去除 \r\n 中的 \r；将单独出现的游离 \r 转换为 \n。
+    /// </summary>
+    public static ReadOnlyMemory<byte> NormalizeLineEndings(byte[] buffer, int offset, int count)
+    {
+        if (count <= 0) return ReadOnlyMemory<byte>.Empty;
+
+        var hasCr = false;
+        for (var i = offset; i < offset + count; i++)
+        {
+            if (buffer[i] == (byte)'\r')
+            {
+                hasCr = true;
+                break;
+            }
+        }
+
+        if (!hasCr)
+        {
+            return buffer.AsMemory(offset, count);
+        }
+
+        var output = new byte[count];
+        var outIdx = 0;
+        for (var i = offset; i < offset + count; i++)
+        {
+            var b = buffer[i];
+            if (b == (byte)'\r')
+            {
+                // 如果紧跟着 \n，忽略 \r
+                if (i + 1 < offset + count && buffer[i + 1] == (byte)'\n')
+                {
+                    continue;
+                }
+                // 游离单独 \r 转为 \n
+                b = (byte)'\n';
+            }
+            output[outIdx++] = b;
+        }
+
+        return output.AsMemory(0, outIdx);
     }
 
     public async ValueTask<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken = default)
@@ -165,6 +222,10 @@ public sealed class ProcessStreamPtySession : IPtySession
         catch
         {
             // 忽略正常读取中断
+        }
+        finally
+        {
+            writer.TryComplete();
         }
     }
 }

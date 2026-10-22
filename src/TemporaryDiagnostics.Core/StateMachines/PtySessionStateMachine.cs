@@ -84,7 +84,7 @@ public sealed class PtySessionStateMachine
     {
         lock (_syncRoot)
         {
-            return _currentState == PtySessionState.Detached && (DateTime.UtcNow - _lastActiveTime) > timeout;
+            return (_currentState == PtySessionState.Detached || _currentState == PtySessionState.Active) && (DateTime.UtcNow - _lastActiveTime) > timeout;
         }
     }
 }

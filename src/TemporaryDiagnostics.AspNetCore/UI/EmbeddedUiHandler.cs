@@ -36,6 +36,8 @@ public static class EmbeddedUiHandler
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
       <title>TemporaryDiagnostics 临时诊断控制台</title>
+      <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230b0f19'/%3E%3Cpath d='M18 4L7 17h8l-2 11 11-13h-8l2-11z' fill='%2338bdf8'/%3E%3C/svg%3E">
+      <link rel="alternate icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E⚡%3C/text%3E%3C/svg%3E">
       <style>
         :root {
           --bg-main: #0b0f19;
@@ -117,9 +119,44 @@ public static class EmbeddedUiHandler
         .login-screen { position: fixed; inset: 0; background: var(--bg-main); display: flex; align-items: center; justify-content: center; z-index: 999; }
         .login-box { width: 380px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 32px; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5); text-align: center; }
         .login-logo { font-size: 2rem; margin-bottom: 8px; }
+
+        /* 全局现代极简深色滚动条 */
+        * {
+          scrollbar-width: thin;
+          scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+        }
+        ::-webkit-scrollbar {
+          width: 6px;
+          height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+          background: transparent;
+        }
+        ::-webkit-scrollbar-thumb {
+          background: rgba(255, 255, 255, 0.16);
+          border-radius: 9999px;
+          transition: background 0.2s ease;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+          background: rgba(56, 189, 248, 0.45);
+        }
+        ::-webkit-scrollbar-corner {
+          background: transparent;
+        }
+
+        /* Toast 通知条 */
+        .toast-container { position: fixed; top: 20px; right: 20px; z-index: 2000; display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
+        .toast { pointer-events: auto; background: #1e293b; border: 1px solid var(--border); color: #fff; padding: 10px 16px; border-radius: 6px; font-size: 13px; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.5); display: flex; align-items: center; gap: 8px; animation: toastSlideIn 0.2s ease-out; max-width: 420px; word-break: break-all; }
+        .toast-success { border-left: 4px solid var(--success); }
+        .toast-error { border-left: 4px solid var(--danger); }
+        .toast-warning { border-left: 4px solid var(--warning); }
+        .toast-info { border-left: 4px solid var(--primary); }
+        @keyframes toastSlideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
       </style>
     </head>
     <body>
+      <!-- 全局 Toast 容器 -->
+      <div id="toastContainer" class="toast-container"></div>
       <!-- 登录遮罩 -->
       <div id="loginScreen" class="login-screen">
         <div class="login-box">
@@ -333,6 +370,22 @@ public static class EmbeddedUiHandler
         </div>
       </div>
 
+      <!-- MCP 结果预览弹窗 -->
+      <div id="mcpModal" class="modal-mask">
+        <div class="modal-body" style="width:720px;">
+          <div class="modal-header">
+            <h3 id="mcpModalTitle">MCP 工具执行响应</h3>
+            <button class="btn btn-outline" style="padding:2px 8px;" onclick="closeMcpModal()">✕</button>
+          </div>
+          <div class="modal-content">
+            <textarea id="mcpModalContent" class="code-editor" style="height:380px;resize:none;" readonly></textarea>
+          </div>
+          <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px;">
+            <button class="btn btn-primary" onclick="closeMcpModal()">关闭</button>
+          </div>
+        </div>
+      </div>
+
       <script>
         const API_PREFIX = '{{prefix}}';
         let currentTab = 'dashboard';
@@ -343,25 +396,43 @@ public static class EmbeddedUiHandler
         let servicesCache = [];
         let selectedServiceType = '';
         let selectedMethodName = '';
+        let vitalsInterval = null;
+
+        // 全局 Toast 提示通知
+        function showToast(msg, type = 'info') {
+          const container = document.getElementById('toastContainer');
+          if (!container) return;
+          const toast = document.createElement('div');
+          toast.className = `toast toast-${type}`;
+          toast.innerText = msg;
+          container.appendChild(toast);
+          setTimeout(() => {
+            toast.style.opacity = '0';
+            toast.style.transition = 'opacity 0.3s ease';
+            setTimeout(() => toast.remove(), 300);
+          }, 3500);
+        }
 
         // 页面初始化
         window.addEventListener('load', async () => {
           await checkAuth();
-          startVitalsPolling();
         });
 
-        // 鉴权检查
+        // 鉴权检查与受控轮询
         async function checkAuth() {
           try {
             const res = await fetch(`${API_PREFIX}/api/auth/status`);
             const data = await res.json();
             if (data.isAuthenticated) {
               document.getElementById('loginScreen').style.display = 'none';
+              startVitalsPolling();
               loadDashboardData();
             } else {
+              stopVitalsPolling();
               document.getElementById('loginScreen').style.display = 'flex';
             }
           } catch (e) {
+            stopVitalsPolling();
             document.getElementById('loginScreen').style.display = 'flex';
           }
         }
@@ -380,6 +451,8 @@ public static class EmbeddedUiHandler
 
             if (res.ok) {
               document.getElementById('loginScreen').style.display = 'none';
+              showToast('登录成功，已接入受控诊断会话', 'success');
+              startVitalsPolling();
               loadDashboardData();
             } else {
               const err = await res.json();
@@ -393,6 +466,7 @@ public static class EmbeddedUiHandler
         }
 
         async function doLogout() {
+          stopVitalsPolling();
           await fetch(`${API_PREFIX}/api/auth/logout`, { method: 'POST' });
           location.reload();
         }
@@ -420,6 +494,13 @@ public static class EmbeddedUiHandler
               fetch(`${API_PREFIX}/api/system/vitals`),
               fetch(`${API_PREFIX}/api/system/overview`)
             ]);
+
+            // 若鉴权失效，立即停止轮询并唤醒登录遮罩
+            if (vitalsRes.status === 401 || sysRes.status === 401) {
+              stopVitalsPolling();
+              document.getElementById('loginScreen').style.display = 'flex';
+              return;
+            }
 
             if (vitalsRes.ok) {
               const v = await vitalsRes.json();
@@ -458,15 +539,50 @@ public static class EmbeddedUiHandler
         }
 
         function startVitalsPolling() {
-          setInterval(() => {
+          if (vitalsInterval) clearInterval(vitalsInterval);
+          vitalsInterval = setInterval(() => {
             if (currentTab === 'dashboard') loadDashboardData();
           }, 2000);
         }
 
-        // 2. 终端 WebSocket 交互
+        function stopVitalsPolling() {
+          if (vitalsInterval) {
+            clearInterval(vitalsInterval);
+            vitalsInterval = null;
+          }
+        }
+
+        // 2. 终端 WebSocket 交互与 ANSI 色彩引擎
+        let termHistory = [];
+        let historyIdx = -1;
+
+        function ansiToHtml(str) {
+          if (!str) return '';
+          const colors = {
+            30: '#475569', 31: '#ef4444', 32: '#10b981', 33: '#f59e0b',
+            34: '#38bdf8', 35: '#c084fc', 36: '#22d3ee', 37: '#f8fafc',
+            90: '#64748b', 91: '#f87171', 92: '#34d399', 93: '#fbbf24',
+            94: '#60a5fa', 95: '#d8b4fe', 96: '#67e8f9', 97: '#ffffff'
+          };
+          let escaped = str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+          return escaped.replace(/\x1b\[([0-9;]*)m/g, (match, p1) => {
+            if (!p1 || p1 === '0') return '</span>';
+            const parts = p1.split(';');
+            const styles = [];
+            for (const code of parts) {
+              const c = parseInt(code, 10);
+              if (c === 0) styles.push('color:inherit;font-weight:normal');
+              else if (c === 1) styles.push('font-weight:bold');
+              else if (colors[c]) styles.push(`color:${colors[c]}`);
+              else if (c >= 40 && c <= 47 && colors[c - 10]) styles.push(`background-color:${colors[c - 10]};padding:1px 3px;border-radius:2px;`);
+            }
+            return `<span style="${styles.join(';')}">`;
+          });
+        }
+
         function initTerminal() {
           const screen = document.getElementById('terminalScreen');
-          screen.innerHTML = '正在建立 PTY 终端 WebSocket 连接...\r\n';
+          screen.innerHTML = ansiToHtml('\x1b[33m正在建立 PTY 终端 WebSocket 连接...\x1b[0m\r\n');
 
           const loc = window.location;
           const proto = loc.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -476,7 +592,7 @@ public static class EmbeddedUiHandler
           ws.binaryType = 'arraybuffer';
 
           ws.onopen = () => {
-            screen.innerHTML = '\x1b[32m[PTY Ready] 交互终端已就绪。输入命令即可执行。\x1b[0m\r\n\r\n';
+            screen.innerHTML = ansiToHtml('\x1b[32m[PTY Ready] 交互终端已就绪。输入命令即可执行。\x1b[0m\r\n\r\n');
           };
 
           ws.onmessage = (event) => {
@@ -501,29 +617,54 @@ public static class EmbeddedUiHandler
 
         function appendTerminalText(text) {
           const screen = document.getElementById('terminalScreen');
-          screen.innerText += text;
+          screen.innerHTML += ansiToHtml(text);
           screen.scrollTop = screen.scrollHeight;
         }
 
         function handleTermKey(e) {
+          const input = document.getElementById('termInput');
           if (e.key === 'Enter') {
-            const input = document.getElementById('termInput');
             const cmd = input.value;
             input.value = '';
+            if (cmd.trim()) {
+              termHistory.push(cmd);
+              if (termHistory.length > 50) termHistory.shift();
+              historyIdx = termHistory.length;
+            }
             if (ws && ws.readyState === WebSocket.OPEN) {
               const encoder = new TextEncoder();
-              ws.send(encoder.encode(cmd + '\r\n'));
+              // 关键修复：发送纯 \n (Unix LF)，避免 Windows CRLF 导致 Linux bash 报 $'cmd\r': command not found
+              ws.send(encoder.encode(cmd + '\n'));
+            }
+          } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            if (termHistory.length > 0 && historyIdx > 0) {
+              historyIdx--;
+              input.value = termHistory[historyIdx] || '';
+            }
+          } else if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            if (historyIdx < termHistory.length - 1) {
+              historyIdx++;
+              input.value = termHistory[historyIdx] || '';
+            } else {
+              historyIdx = termHistory.length;
+              input.value = '';
             }
           }
         }
 
         function reconnectTerminal() {
-          if (ws) ws.close();
-          initTerminal();
+          if (ws) {
+            ws.close();
+            ws = null;
+          }
+          appendTerminalText('\r\n\x1b[33m[PTY] 正在释放旧会话并重连...\x1b[0m\r\n');
+          setTimeout(() => initTerminal(), 250);
         }
 
         function clearTerminal() {
-          document.getElementById('terminalScreen').innerText = '';
+          document.getElementById('terminalScreen').innerHTML = '';
         }
 
         // 3. 文件管理
@@ -569,6 +710,8 @@ public static class EmbeddedUiHandler
             const data = await res.json();
             document.getElementById('fileEditorContent').value = data.content;
             document.getElementById('fileEditModal').classList.add('show');
+          } else {
+            showToast('无法读取文件内容（可能为二进制或受保护）', 'error');
           }
         }
 
@@ -584,10 +727,10 @@ public static class EmbeddedUiHandler
             body: JSON.stringify({ fullPath: currentEditingPath, content })
           });
           if (res.ok) {
-            alert('保存成功！');
+            showToast('文件保存成功！', 'success');
             closeEditModal();
           } else {
-            alert('保存失败');
+            showToast('文件保存失败', 'error');
           }
         }
 
@@ -664,18 +807,19 @@ public static class EmbeddedUiHandler
         function chooseMethod(methodName) {
           selectedMethodName = methodName;
           document.getElementById('invokeTargetInfo').innerText = `已选目标: ${selectedServiceType} -> ${methodName}()`;
+          showToast(`已选定调用方法: ${methodName}()`, 'info');
         }
 
         async function executeMethodCall() {
           if (!selectedServiceType || !selectedMethodName) {
-            alert('请先选择服务和目标方法！');
+            showToast('请先选择服务和目标方法！', 'warning');
             return;
           }
 
           const argsStr = document.getElementById('invokeArgsInput').value.trim();
           let parsedArgs = [];
           if (argsStr) {
-            try { parsedArgs = JSON.parse(argsStr); } catch (e) { alert('参数必须为有效 JSON 数组，如 [10, "test"]'); return; }
+            try { parsedArgs = JSON.parse(argsStr); } catch (e) { showToast('参数必须为有效 JSON 数组，如 [10, "test"]', 'error'); return; }
           }
 
           const useFastEmit = document.getElementById('chkFastEmit').checked;
@@ -696,8 +840,10 @@ public static class EmbeddedUiHandler
 
             const data = await res.json();
             outputBox.value = JSON.stringify(data, null, 2);
+            showToast('动态调用执行完成', 'success');
           } catch (e) {
             outputBox.value = `调用异常: ${e.message}`;
+            showToast(`动态调用失败: ${e.message}`, 'error');
           }
         }
 
@@ -756,10 +902,11 @@ public static class EmbeddedUiHandler
 
         async function clearLogs() {
           await fetch(`${API_PREFIX}/api/logs/clear`, { method: 'POST' });
+          showToast('日志缓冲区已清空', 'info');
           switchLogMode('recent');
         }
 
-        // 6. MCP 工具集
+        // 6. MCP 工具集与非阻塞交互
         async function loadMcpTools() {
           const res = await fetch(`${API_PREFIX}/mcp/tools`);
           if (!res.ok) return;
@@ -780,6 +927,16 @@ public static class EmbeddedUiHandler
           });
         }
 
+        function showMcpModal(title, content) {
+          document.getElementById('mcpModalTitle').innerText = title;
+          document.getElementById('mcpModalContent').value = content;
+          document.getElementById('mcpModal').classList.add('show');
+        }
+
+        function closeMcpModal() {
+          document.getElementById('mcpModal').classList.remove('show');
+        }
+
         async function testMcpTool(toolName) {
           const rpcBody = {
             jsonrpc: "2.0",
@@ -791,14 +948,20 @@ public static class EmbeddedUiHandler
             }
           };
 
-          const res = await fetch(`${API_PREFIX}/mcp`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(rpcBody)
-          });
+          try {
+            showToast(`正在发起 MCP 调用: ${toolName}...`, 'info');
+            const res = await fetch(`${API_PREFIX}/mcp`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(rpcBody)
+            });
 
-          const data = await res.json();
-          alert(`[MCP Response]\n${JSON.stringify(data, null, 2)}`);
+            const data = await res.json();
+            showMcpModal(`MCP 工具响应结果 [${toolName}]`, JSON.stringify(data, null, 2));
+            showToast(`MCP 工具 [${toolName}] 执行完成`, 'success');
+          } catch (e) {
+            showToast(`MCP 调用失败: ${e.message}`, 'error');
+          }
         }
       </script>
     </body>

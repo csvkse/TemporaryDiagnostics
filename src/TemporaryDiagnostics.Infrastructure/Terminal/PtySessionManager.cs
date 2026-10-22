@@ -13,8 +13,8 @@ public sealed class PtySessionManager : IDisposable
 
     public PtySessionManager()
     {
-        // 每 60 秒轮询清理已经终止或退出的死会话
-        _cleanupTimer = new Timer(CleanupDeadSessions, null, TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(60));
+        // 每 30 秒轮询清理已经终止或退出的死会话
+        _cleanupTimer = new Timer(CleanupDeadSessions, null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
     }
 
     public void RegisterSession(IPtySession session)
@@ -41,7 +41,23 @@ public sealed class PtySessionManager : IDisposable
 
     public IReadOnlyList<IPtySession> ListActiveSessions()
     {
-        return _sessions.Values.Where(s => s.IsActive).ToList();
+        var active = new List<IPtySession>();
+        foreach (var (id, session) in _sessions)
+        {
+            if (session.IsActive)
+            {
+                active.Add(session);
+            }
+            else
+            {
+                // 惰性移除已失效的死会话，避免在重连时误占并发配额
+                if (_sessions.TryRemove(id, out var deadSession))
+                {
+                    _ = deadSession.DisposeAsync();
+                }
+            }
+        }
+        return active;
     }
 
     private void CleanupDeadSessions(object? state)

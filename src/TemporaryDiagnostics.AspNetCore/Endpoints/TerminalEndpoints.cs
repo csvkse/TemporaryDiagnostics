@@ -138,21 +138,27 @@ public static class TerminalEndpoints
                 catch { }
             }, cts.Token);
 
-            await Task.WhenAny(ptyToWsTask, wsToPtyTask);
-            cts.Cancel();
-
-            if (webSocket.State == WebSocketState.Open)
+            try
             {
-                try
-                {
-                    await webSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Session ended", CancellationToken.None);
-                }
-                catch { }
+                await Task.WhenAny(ptyToWsTask, wsToPtyTask);
             }
-
-            if (session != null)
+            finally
             {
-                await ptyEngine.CloseSessionAsync(session.Id, CancellationToken.None);
+                cts.Cancel();
+
+                if (webSocket.State == WebSocketState.Open)
+                {
+                    try
+                    {
+                        await webSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Session ended", CancellationToken.None);
+                    }
+                    catch { }
+                }
+
+                if (session != null)
+                {
+                    await ptyEngine.CloseSessionAsync(session.Id, CancellationToken.None);
+                }
             }
         });
 
