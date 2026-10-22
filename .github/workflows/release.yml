@@ -20,6 +20,7 @@ on:
 permissions:
   contents: write
   packages: write
+  id-token: write
 
 jobs:
   build-and-pack:
@@ -145,18 +146,32 @@ jobs:
             fi
           done
 
+      - name: NuGet Login via OIDC (Trusted Publishing)
+        id: nuget-login
+        uses: NuGet/login@v1
+        continue-on-error: true
+        with:
+          user: csvkse
+
       - name: Push to Official NuGet.org
         shell: bash
         env:
-          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+          OIDC_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
+          SECRET_KEY: ${{ secrets.NUGET_API_KEY }}
           SHOULD_PUSH: ${{ github.event_name != 'workflow_dispatch' || inputs.push_to_nuget }}
         run: |
-          if [ -z "$NUGET_API_KEY" ]; then
-            echo "::warning ::未检测到 NUGET_API_KEY Secret。若需自动发布到官方 nuget.org，请在 GitHub 仓库设置中添加 Secret: NUGET_API_KEY。"
-            echo "已跳过推送到 nuget.org。"
+          KEY="${OIDC_KEY:-$SECRET_KEY}"
+          if [ -z "$KEY" ]; then
+            echo "::error ::未获取到 NuGet API 认证凭据（Trusted Publishing OIDC Token 与 NUGET_API_KEY 均为空）。请检查 Trusted Publishing 策略配置或添加 NUGET_API_KEY Secret。"
+            exit 1
           elif [ "$SHOULD_PUSH" != "true" ]; then
             echo "用户在手动触发时选择了跳过推送到 nuget.org。"
           else
+            if [ -n "$OIDC_KEY" ]; then
+              echo "✅ 使用 NuGet.org Trusted Publishing (OIDC 无密钥凭据) 进行安全认证"
+            else
+              echo "ℹ️ 使用 Repository Secret (NUGET_API_KEY) 进行认证"
+            fi
             echo "正在将 NuGet 包逐个推送到官方 nuget.org..."
             for pkg in ./artifacts/nuget/*.nupkg; do
               if [ -f "$pkg" ]; then
@@ -165,7 +180,7 @@ jobs:
                 echo "================================================="
                 dotnet nuget push "$pkg" \
                   --source "https://api.nuget.org/v3/index.json" \
-                  --api-key "$NUGET_API_KEY" \
+                  --api-key "$KEY" \
                   --skip-duplicate
               fi
             done

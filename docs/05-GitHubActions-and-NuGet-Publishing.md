@@ -47,27 +47,37 @@
   - `TemporaryDiagnostics.AspNetCore`: 一键中间件集成、Minimal API、单页可视化 UI 与 OpenAPI。
 - **双发布通道**：
   - **通道 A：GitHub Release**：自动附带版本更新日志和所有 `.nupkg` 文件；
-  - **通道 B：官方 nuget.org**：读取仓库 Secret `NUGET_API_KEY`，执行 `dotnet nuget push --source https://api.nuget.org/v3/index.json --skip-duplicate`。
+  - **通道 B：官方 nuget.org**：
+    - **首选现代方案**：**Trusted Publishing (OIDC 无密钥)**，利用 GitHub Actions 的 `id-token: write` 与 `NuGet/login@v1` 交换临时单次密钥，免维护、零泄露风险；
+    - **备选传统方案**：读取仓库 Secret `NUGET_API_KEY`。
 
 ---
 
-## 三、nuget.org 密钥配置与维护流程
+## 三、nuget.org 认证配置规范
 
-### 1. 生成 API Key（只需配置一次）
+### 1. 推荐：Trusted Publishing（受信任发布者 / OIDC 无密钥）
+微软官方推荐的现代化发布方式，无需在 GitHub 存储静态 API Key：
+1. 访问 [https://www.nuget.org/account/trustedpublishing](https://www.nuget.org/account/trustedpublishing)；
+2. 填写 Policy 参数：
+   - **Policy Name**：`TemporaryDiagnostics-Release`
+   - **Package Owner**：`csvkse`
+   - **CI/CD Provider**：`GitHub Actions`
+   - **Repository Owner**：`csvkse`
+   - **Repository**：`TemporaryDiagnostics`
+   - **Workflow File**：`release.yml`
+   - **Environment**：留空
+   - **Scopes**：勾选 `Push new packages and package versions`
+   - **Glob patterns**：`*`
+3. 工作流中已预置 `permissions: id-token: write` 与 `NuGet/login@v1`，直接触发 Tag 即可自动完成 OIDC 鉴权发布。
+
+### 2. 备用：传统 API Key 方式
 1. 访问 [https://www.nuget.org/account/apikeys](https://www.nuget.org/account/apikeys)；
 2. 点击 **Create**：
    - **Key Name**：`TemporaryDiagnostics-Release`
-   - **Package Owner**：选择当前开发者账号
+   - **Package Owner**：`csvkse`
    - **Scopes**：勾选 `Push` ➔ `Push new packages and package versions`
-   - **Glob pattern**：`*` 或 `TemporaryDiagnostics.*`
-3. 复制生成的 API Key 字符串。
-
-### 2. 在 GitHub 仓库注入密钥
-1. 访问 GitHub 仓库设置：`https://github.com/csvkse/TemporaryDiagnostics/settings/secrets/actions`；
-2. 新建 Repository Secret：
-   - **Name**：`NUGET_API_KEY`
-   - **Value**：粘贴 nuget.org 复制的 Key
-3. 点击 **Add secret** 完成保存。
+   - **Glob pattern**：`*`
+3. 复制生成的 Key，在 GitHub 仓库设置 `Settings > Secrets and variables > Actions` 中添加 Secret：`NUGET_API_KEY`。
 
 ---
 
@@ -79,12 +89,12 @@
 # 1. 更新全局版本号（Directory.Build.props）
 # 2. 提交并推送到 main 分支
 git add -A
-git commit -m "chore(release): bump version to 1.0.1"
+git commit -m "chore(release): bump version to 1.0.2"
 git push origin main
 
 # 3. 创建并推送 Git Tag 触发自动化工作流
-git tag -a v1.0.1 -m "Release v1.0.1: Initial official NuGet publish"
-git push origin v1.0.1
+git tag -a v1.0.2 -m "Release v1.0.2: Enable NuGet Trusted Publishing"
+git push origin v1.0.2
 ```
 
 发布完成后可在以下位置验证：
