@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/TemporaryDiagnostics.Core/TemporaryDiagnostics.Core.csproj" />
+  </Folder>
+  <Project Path="src/TemporaryDiagnostics.AspNetCore/TemporaryDiagnostics.AspNetCore.csproj" />
+  <Project Path="src/TemporaryDiagnostics.Infrastructure/TemporaryDiagnostics.Infrastructure.csproj" />
+  <Project Path="src/TemporaryDiagnostics.SampleHost/TemporaryDiagnostics.SampleHost.csproj" />
+  <Project Path="tests/TemporaryDiagnostics.Tests/TemporaryDiagnostics.Tests.csproj" />
+</Solution>

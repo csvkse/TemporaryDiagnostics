@@ -1,0 +1,145 @@
+name: Publish NuGet to GitHub Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release 版本号（如 1.0.0 或 v1.0.0）'
+        required: true
+        default: '1.0.0'
+        type: string
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  build-and-pack:
+    name: Build, Test & Pack NuGet
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout Repository with Full History
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+          include-prerelease: true
+
+      - name: Determine Package Version
+        id: get-version
+        shell: bash
+        run: |
+          RAW_VERSION="${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}"
+          # 去除可能携带的 v 前缀 (如 v1.0.0 -> 1.0.0)
+          CLEAN_VERSION="${RAW_VERSION#v}"
+          TAG_NAME="v${CLEAN_VERSION}"
+          echo "Package Version: $CLEAN_VERSION"
+          echo "Release Tag: $TAG_NAME"
+          echo "version=$CLEAN_VERSION" >> $GITHUB_OUTPUT
+          echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
+
+      - name: Restore Dependencies
+        run: dotnet restore
+
+      - name: Run Tests
+        run: dotnet test -c Release --no-restore --verbosity normal
+
+      - name: Pack NuGet Packages
+        run: >
+          dotnet pack
+          -c Release
+          --no-build
+          -o ./artifacts/nuget
+          /p:PackageVersion=${{ steps.get-version.outputs.version }}
+          /p:Version=${{ steps.get-version.outputs.version }}
+          /p:ContinuousIntegrationBuild=true
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuget-packages
+          path: ./artifacts/nuget/*.nupkg
+          retention-days: 30
+
+      - name: Generate Release Changelog
+        id: changelog
+        shell: bash
+        run: |
+          TAG_NAME="${{ steps.get-version.outputs.tag_name }}"
+          PREV_TAG=$(git describe --tags --abbrev=0 "${TAG_NAME}^" 2>/dev/null || echo "")
+          echo "Previous tag: $PREV_TAG"
+
+          if [ -n "$PREV_TAG" ]; then
+            COMMITS=$(git log "${PREV_TAG}..HEAD" --pretty=format:"- %s ([%h](https://github.com/${{ github.repository }}/commit/%H))" --no-merges 2>/dev/null || echo "")
+            TITLE="更新日志 (\`${PREV_TAG}\` ➔ \`${TAG_NAME}\`)"
+          else
+            COMMITS=$(git log -n 20 --pretty=format:"- %s ([%h](https://github.com/${{ github.repository }}/commit/%H))" --no-merges 2>/dev/null || echo "")
+            TITLE="版本发布更新日志 (\`${TAG_NAME}\`)"
+          fi
+
+          {
+            echo "## ⚡ TemporaryDiagnostics 发布版本: ${TAG_NAME}"
+            echo ""
+            echo "### 📦 包含的 NuGet 包资产"
+            echo "- **TemporaryDiagnostics.Core** (\`${{ steps.get-version.outputs.version }}\`): 诊断抽象契约、Result<T>、配置模型与状态机"
+            echo "- **TemporaryDiagnostics.Infrastructure** (\`${{ steps.get-version.outputs.version }}\`): 跨平台 PTY/ConPTY 终端、IL Emit 动态编译器、系统指标适配器与 MCP 引擎"
+            echo "- **TemporaryDiagnostics.AspNetCore** (\`${{ steps.get-version.outputs.version }}\`): 一键中间件集成、Minimal API 端点、嵌入式单页 UI 与 OpenAPI 文档"
+            echo ""
+            echo "<details><summary><b>📋 ${TITLE}</b></summary>"
+            echo ""
+            printf '%s\n' "$COMMITS"
+            echo ""
+            echo "</details>"
+            echo ""
+            echo "### 🚀 快速使用"
+            echo '```csharp'
+            echo 'builder.Services.AddTemporaryDiagnostics(options => {'
+            echo '    options.AccessKey = "YourSecureKey@2026";'
+            echo '    options.RoutePrefix = "/__diag";'
+            echo '});'
+            echo ''
+            echo 'var app = builder.Build();'
+            echo 'app.UseTemporaryDiagnostics();'
+            echo 'app.Run();'
+            echo '```'
+          } > ./release_notes.md
+
+      - name: Create or Update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.get-version.outputs.tag_name }}
+          name: "TemporaryDiagnostics ${{ steps.get-version.outputs.tag_name }}"
+          body_path: ./release_notes.md
+          files: ./artifacts/nuget/*.nupkg
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push to GitHub Packages NuGet Registry
+        continue-on-error: true
+        run: |
+          dotnet nuget push "./artifacts/nuget/*.nupkg" \
+            --source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" \
+            --api-key "${{ secrets.GITHUB_TOKEN }}" \
+            --skip-duplicate
+
+      - name: Push to NuGet.org (Optional if secret configured)
+        if: env.NUGET_API_KEY != ''
+        continue-on-error: true
+        run: |
+          dotnet nuget push "./artifacts/nuget/*.nupkg" \
+            --source "https://api.nuget.org/v3/index.json" \
+            --api-key "${{ env.NUGET_API_KEY }}" \
+            --skip-duplicate
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}

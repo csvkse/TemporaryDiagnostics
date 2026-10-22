@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <Description>Sample host application demonstrating one-click integration of TemporaryDiagnostics.</Description>
+    <IsPackable>false</IsPackable>
+    <NoWarn>$(NoWarn);NU1903;NU1902</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\TemporaryDiagnostics.AspNetCore\TemporaryDiagnostics.AspNetCore.csproj" />
+  </ItemGroup>
+</Project>
