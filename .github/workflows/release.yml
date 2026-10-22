@@ -1,4 +1,4 @@
-name: Publish NuGet to GitHub Release
+name: Publish NuGet to GitHub Release & NuGet.org
 
 on:
   push:
@@ -11,6 +11,11 @@ on:
         required: true
         default: '1.0.0'
         type: string
+      push_to_nuget:
+        description: '是否推送到官方 nuget.org (需要配置 NUGET_API_KEY)'
+        required: false
+        default: true
+        type: boolean
 
 permissions:
   contents: write
@@ -128,18 +133,28 @@ jobs:
       - name: Push to GitHub Packages NuGet Registry
         continue-on-error: true
         run: |
+          echo "Pushing packages to GitHub Packages NuGet Registry..."
           dotnet nuget push "./artifacts/nuget/*.nupkg" \
             --source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" \
             --api-key "${{ secrets.GITHUB_TOKEN }}" \
             --skip-duplicate
 
-      - name: Push to NuGet.org (Optional if secret configured)
-        if: env.NUGET_API_KEY != ''
-        continue-on-error: true
-        run: |
-          dotnet nuget push "./artifacts/nuget/*.nupkg" \
-            --source "https://api.nuget.org/v3/index.json" \
-            --api-key "${{ env.NUGET_API_KEY }}" \
-            --skip-duplicate
+      - name: Push to Official NuGet.org
+        shell: bash
         env:
           NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+          SHOULD_PUSH: ${{ github.event_name != 'workflow_dispatch' || inputs.push_to_nuget }}
+        run: |
+          if [ -z "$NUGET_API_KEY" ]; then
+            echo "::warning ::未检测到 NUGET_API_KEY Secret。若需自动发布到官方 nuget.org，请在 GitHub 仓库设置中添加 Secret: NUGET_API_KEY。"
+            echo "已跳过推送到 nuget.org。"
+          elif [ "$SHOULD_PUSH" != "true" ]; then
+            echo "用户在手动触发时选择了跳过推送到 nuget.org。"
+          else
+            echo "正在将 NuGet 包推送到官方 nuget.org..."
+            dotnet nuget push "./artifacts/nuget/*.nupkg" \
+              --source "https://api.nuget.org/v3/index.json" \
+              --api-key "$NUGET_API_KEY" \
+              --skip-duplicate
+            echo "已成功推送到 nuget.org！"
+          fi
