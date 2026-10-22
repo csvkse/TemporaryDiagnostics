@@ -98,7 +98,8 @@ TemporaryDiagnostics/
 │   ├── 01-Feasibility-and-Brainstorming.md        # 可行性深度分析、边界陷阱与设计模式应用
 │   ├── 02-Industry-Comparison-and-Selection.md    # 现有库选型与对比报告
 │   ├── 03-Architecture-and-Security-Design.md     # 架构设计、动态 Emit 机制与纵深安全防线
-│   └── 04-API-and-MCP-Specification.md           # REST 路由与 MCP JSON-RPC 2.0 协议规范
+│   ├── 04-API-and-MCP-Specification.md           # REST 路由与 MCP JSON-RPC 2.0 协议规范
+│   └── 05-GitHubActions-and-NuGet-Publishing.md   # GitHub Actions 自动化 CI/CD 与 NuGet 发布方案
 ├── src/
 │   ├── TemporaryDiagnostics.Core/                 # 领域契约、Result<T>、配置模型与状态机
 │   ├── TemporaryDiagnostics.Infrastructure/       # PTY 引擎、IL Emit 编译器、系统适配器、环形缓冲、MCP 引擎

@@ -11,7 +11,7 @@
     <RepositoryType>git</RepositoryType>
     <PackageProjectUrl>https://github.com/csvkse/TemporaryDiagnostics</PackageProjectUrl>
     <PackageTags>diagnostics;aspnetcore;terminal;conpty;mcp;emit;reflection;monitoring;sidecar</PackageTags>
-    <Version>1.0.0</Version>
+    <Version>1.0.1</Version>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <NoWarn>$(NoWarn);NU1903;NU1902;NU5104</NoWarn>
   </PropertyGroup>
