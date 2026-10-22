@@ -132,12 +132,18 @@ jobs:
 
       - name: Push to GitHub Packages NuGet Registry
         continue-on-error: true
+        shell: bash
         run: |
           echo "Pushing packages to GitHub Packages NuGet Registry..."
-          dotnet nuget push "./artifacts/nuget/*.nupkg" \
-            --source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" \
-            --api-key "${{ secrets.GITHUB_TOKEN }}" \
-            --skip-duplicate
+          for pkg in ./artifacts/nuget/*.nupkg; do
+            if [ -f "$pkg" ]; then
+              echo "==> Pushing $pkg to GitHub Packages..."
+              dotnet nuget push "$pkg" \
+                --source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" \
+                --api-key "${{ secrets.GITHUB_TOKEN }}" \
+                --skip-duplicate || true
+            fi
+          done
 
       - name: Push to Official NuGet.org
         shell: bash
@@ -151,10 +157,17 @@ jobs:
           elif [ "$SHOULD_PUSH" != "true" ]; then
             echo "用户在手动触发时选择了跳过推送到 nuget.org。"
           else
-            echo "正在将 NuGet 包推送到官方 nuget.org..."
-            dotnet nuget push "./artifacts/nuget/*.nupkg" \
-              --source "https://api.nuget.org/v3/index.json" \
-              --api-key "$NUGET_API_KEY" \
-              --skip-duplicate
-            echo "已成功推送到 nuget.org！"
+            echo "正在将 NuGet 包逐个推送到官方 nuget.org..."
+            for pkg in ./artifacts/nuget/*.nupkg; do
+              if [ -f "$pkg" ]; then
+                echo "================================================="
+                echo "==> 正在推送到 nuget.org: $pkg"
+                echo "================================================="
+                dotnet nuget push "$pkg" \
+                  --source "https://api.nuget.org/v3/index.json" \
+                  --api-key "$NUGET_API_KEY" \
+                  --skip-duplicate
+              fi
+            done
+            echo "所有 NuGet 包已成功推送到 nuget.org！"
           fi

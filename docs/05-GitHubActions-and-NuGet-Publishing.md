@@ -91,3 +91,20 @@ git push origin v1.0.1
 1. **GitHub Actions 运行日志**：查看 `Push to Official NuGet.org` 步骤输出；
 2. **GitHub Releases**：[https://github.com/csvkse/TemporaryDiagnostics/releases](https://github.com/csvkse/TemporaryDiagnostics/releases)；
 3. **nuget.org 个人包列表**：[https://www.nuget.org/profiles/](https://www.nuget.org/profiles/)（通常上传后经过 2~5 分钟的系统索引即全网生效）。
+
+---
+
+## 五、常见发布异常排查 (Troubleshooting)
+
+### 1. `Push to Official NuGet.org` 失败报 `403 (Forbidden)`
+- **原因 A（最常见）**：API Key 的 Scopes 未勾选 **`Push new packages and package versions`**（允许推送新包和新版本）。
+  - 若勾选了默认的 `Push only new package versions`（仅推送新包版本），因 `TemporaryDiagnostics.*` 是新上架的包，nuget.org 会拦截并返回 403。
+  - **解决办法**：在 nuget.org 重新编辑该 API Key，修改权限为 `Push new packages and package versions`，更新 GitHub Secrets。
+- **原因 B**：Glob pattern 未匹配。
+  - 若填写了 `TemporaryDiagnostics`，子包 `TemporaryDiagnostics.Core` 会匹配失败。
+  - **解决办法**：Glob pattern 改为 `*` 或 `TemporaryDiagnostics*`。
+- **原因 C**：GitHub Secret 名称拼写错误。
+  - 必须严格为 `NUGET_API_KEY`（无空格）。
+
+### 2. 重试发布（无需重新打 tag）
+在 GitHub Actions 页面直接点击失败的 Run -> 点击右上角 **`Re-run jobs`** -> **`Re-run failed jobs`**，配置生效后即可自动重新推送，无需删除重建 Tag。
